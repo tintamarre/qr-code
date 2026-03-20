@@ -120,7 +120,7 @@
 
                     <!-- Style Presets -->
                     <div class="mb-4 grid grid-cols-3 gap-2">
-                        <button v-for="p in presets" :key="p.id" @click="selectedPreset = p.id"
+                        <button v-for="p in presets" :key="p.id" @click="selectPreset(p.id)"
                             class="p-2 rounded-xl border-2 transition-all duration-200 flex flex-col items-center gap-1"
                             :class="selectedPreset === p.id
                                 ? 'border-beat bg-beat/10'
@@ -313,6 +313,11 @@
                     qrSvg.value = qr.svg();
                 }
 
+                function selectPreset(id) {
+                    selectedPreset.value = id;
+                    if (inputText.value.trim()) generateQR();
+                }
+
                 function downloadSvg() {
                     if (!qrSvg.value) return;
                     const blob = new Blob([qrSvg.value], { type: 'image/svg+xml' });
@@ -330,7 +335,7 @@
                     video, canvasOverlay, scanning, result, resultFormat, copied, cameraError,
                     inputText, qrSvg, selectedPreset, presets,
                     switchTab, toggleTheme, startCamera, stopCamera, isUrl, copyResult,
-                    generateQR, downloadSvg
+                    selectPreset, generateQR, downloadSvg
                 };
             }
         }).mount('#app');
