@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>QR Code Tools</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qr-creator@1.0.0/dist/qr-creator.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        accent: '#e76f51',
+                        beat: '#2a9d8f',
+                        dark: { 900: '#0f0f0f', 800: '#1a1a1a', 700: '#2a2a2a', 600: '#3a3a3a' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { margin: 0; min-height: 100vh; }
+        video { transform: scaleX(-1); }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-dark-900 text-gray-900 dark:text-white transition-colors duration-200">
+    <div id="app" class="min-h-screen flex flex-col">
+        <!-- Header -->
+        <div class="w-full max-w-md mx-auto pt-4 px-4 flex items-center gap-2">
+            <div class="flex-1 flex gap-1 p-1 bg-gray-200 dark:bg-dark-800 rounded-lg">
+                <button
+                    v-for="tab in tabs"
+                    :key="tab.id"
+                    @click="switchTab(tab.id)"
+                    class="flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors duration-200"
+                    :class="mode === tab.id ? 'bg-beat text-white' : 'text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300'"
+                >{{ tab.label }}</button>
+            </div>
+            <button
+                @click="toggleTheme"
+                class="p-2 rounded-lg bg-gray-200 dark:bg-dark-700 hover:bg-gray-300 dark:hover:bg-dark-600 transition-colors shrink-0"
+            >
+                <svg v-if="theme === 'dark'" class="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd" />
+                </svg>
+                <svg v-else class="w-5 h-5 text-gray-700" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- Main -->
+        <main class="flex-1 flex flex-col items-center justify-center px-4 py-4">
+            <div class="w-full max-w-md mx-auto">
+                <p class="text-center text-sm text-gray-500 dark:text-gray-400 mb-6">{{ currentTab.description }}</p>
+
+                <!-- Read QR Code Tab -->
+                <div v-if="mode === 'read'">
+                    <div class="relative rounded-xl overflow-hidden bg-black mb-4">
+                        <video ref="video" autoplay playsinline class="w-full block"></video>
+                        <canvas ref="canvasOverlay" class="hidden"></canvas>
+                        <!-- Scanning indicator -->
+                        <div v-if="scanning && !result" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                            <div class="w-48 h-48 border-2 border-beat rounded-lg opacity-50"></div>
+                        </div>
+                    </div>
+
+                    <div v-if="cameraError" class="rounded-xl p-3 text-sm bg-accent/20 text-accent mb-4">
+                        {{ cameraError }}
+                    </div>
+
+                    <div v-if="!scanning && !cameraError" class="mb-4">
+                        <button
+                            @click="startCamera"
+                            class="w-full py-3 px-6 rounded-xl font-bold text-lg transition-all duration-200 touch-manipulation shadow-lg bg-beat hover:bg-teal-600 active:bg-teal-700 text-white"
+                        >Start Camera</button>
+                    </div>
+
+                    <div v-if="scanning" class="mb-4">
+                        <button
+                            @click="stopCamera"
+                            class="w-full py-3 px-6 rounded-xl font-bold text-lg transition-all duration-200 touch-manipulation shadow-lg bg-gray-200 dark:bg-dark-700 text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-dark-600"
+                        >Stop Camera</button>
+                    </div>
+
+                    <!-- Result -->
+                    <div v-if="result" class="rounded-xl p-4 bg-beat/20 text-beat">
+                        <p class="text-xs font-medium mb-1 opacity-70">Decoded content:</p>
+                        <a v-if="isUrl(result)" :href="result" target="_blank" rel="noopener noreferrer"
+                           class="text-sm font-medium underline break-all">{{ result }}</a>
+                        <p v-else class="text-sm font-medium break-all">{{ result }}</p>
+                    </div>
+                </div>
+
+                <!-- Generate QR Code Tab -->
+                <div v-if="mode === 'generate'">
+                    <div class="mb-4">
+                        <textarea
+                            v-model="inputText"
+                            placeholder="Enter text or URL..."
+                            rows="3"
+                            class="w-full p-3 rounded-xl border-2 border-gray-300 dark:border-dark-700 bg-white dark:bg-dark-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:border-beat focus:outline-none transition-colors duration-200 resize-none"
+                        ></textarea>
+                    </div>
+
+                    <button
+                        @click="generateQR"
+                        :disabled="!inputText.trim()"
+                        class="w-full py-3 px-6 rounded-xl font-bold text-lg transition-all duration-200 touch-manipulation shadow-lg mb-4"
+                        :class="inputText.trim()
+                            ? 'bg-beat hover:bg-teal-600 active:bg-teal-700 text-white'
+                            : 'bg-gray-200 dark:bg-dark-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'"
+                    >Generate QR Code</button>
+
+                    <!-- QR Output -->
+                    <div v-if="qrSvg" class="flex flex-col items-center gap-4">
+                        <div class="p-4 bg-white rounded-xl shadow-lg" v-html="qrSvg"></div>
+                        <button
+                            @click="downloadSvg"
+                            class="py-2 px-6 rounded-xl font-medium text-sm transition-all duration-200 bg-accent hover:bg-orange-600 active:bg-orange-700 text-white shadow"
+                        >Download SVG</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="py-2 text-center text-gray-500 dark:text-gray-600 text-sm">
+            Built with &#10084;&#65039; by Martin – <a href="https://github.com/tintamarre/qr-code" target="_blank" class="hover:text-gray-700 dark:hover:text-gray-400 transition-colors">Source code</a>
+        </footer>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onBeforeUnmount, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const mode = ref('read');
+                const theme = ref(localStorage.getItem('theme') || 'light');
+
+                // Read tab state
+                const video = ref(null);
+                const canvasOverlay = ref(null);
+                const scanning = ref(false);
+                const result = ref('');
+                const cameraError = ref('');
+                let stream = null;
+                let animFrameId = null;
+
+                // Generate tab state
+                const inputText = ref('');
+                const qrSvg = ref('');
+
+                const tabs = [
+                    { id: 'read', label: 'Read QR Code', description: 'Scan a QR code using your device camera.' },
+                    { id: 'generate', label: 'Generate QR Code', description: 'Create a QR code as SVG from text or URL.' }
+                ];
+
+                const currentTab = computed(() => tabs.find(t => t.id === mode.value));
+
+                // Theme
+                const applyTheme = (t) => document.documentElement.classList.toggle('dark', t === 'dark');
+                const toggleTheme = () => {
+                    theme.value = theme.value === 'dark' ? 'light' : 'dark';
+                    localStorage.setItem('theme', theme.value);
+                    applyTheme(theme.value);
+                };
+                applyTheme(theme.value);
+
+                // Tab switching
+                function switchTab(id) {
+                    if (mode.value === 'read' && id !== 'read') stopCamera();
+                    mode.value = id;
+                }
+
+                // Camera / QR reading
+                async function startCamera() {
+                    result.value = '';
+                    cameraError.value = '';
+                    try {
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'environment' }
+                        });
+                        await nextTick();
+                        if (video.value) {
+                            video.value.srcObject = stream;
+                            scanning.value = true;
+                            scanFrame();
+                        }
+                    } catch (err) {
+                        cameraError.value = 'Could not access camera. Make sure you allow camera permissions and use HTTPS.';
+                    }
+                }
+
+                function stopCamera() {
+                    scanning.value = false;
+                    if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+                    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+                    if (video.value) video.value.srcObject = null;
+                }
+
+                function scanFrame() {
+                    if (!scanning.value || !video.value) return;
+                    const v = video.value;
+                    if (v.readyState === v.HAVE_ENOUGH_DATA) {
+                        const canvas = canvasOverlay.value;
+                        canvas.width = v.videoWidth;
+                        canvas.height = v.videoHeight;
+                        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
+                        if (code && code.data) {
+                            result.value = code.data;
+                            stopCamera();
+                            return;
+                        }
+                    }
+                    animFrameId = requestAnimationFrame(scanFrame);
+                }
+
+                function isUrl(text) {
+                    try { new URL(text); return true; } catch { return false; }
+                }
+
+                // QR Generation
+                function generateQR() {
+                    const text = inputText.value.trim();
+                    if (!text) return;
+                    // Create a temporary container for qr-creator to render into
+                    const container = document.createElement('div');
+                    QrCreator.render({
+                        text: text,
+                        radius: 0,
+                        ecLevel: 'M',
+                        fill: '#000000',
+                        background: '#ffffff',
+                        size: 256
+                    }, container);
+                    // qr-creator renders a canvas, so we convert to SVG manually
+                    // Actually, qr-creator only outputs canvas. Let's build SVG ourselves.
+                    qrSvg.value = '';
+                    generateSvgQR(text);
+                }
+
+                function generateSvgQR(text) {
+                    // Use qr-creator to render to a canvas, then extract pixel data to build SVG
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 256;
+                    canvas.height = 256;
+                    QrCreator.render({
+                        text: text,
+                        radius: 0,
+                        ecLevel: 'M',
+                        fill: '#000000',
+                        background: '#ffffff',
+                        size: 256
+                    }, canvas);
+
+                    // Read pixel data and find QR modules
+                    const ctx = canvas.getContext('2d');
+                    const imageData = ctx.getImageData(0, 0, 256, 256);
+                    const data = imageData.data;
+
+                    // Detect module size by finding first dark pixel run
+                    let moduleSize = 1;
+                    for (let x = 0; x < 256; x++) {
+                        const idx = x * 4;
+                        if (data[idx] < 128) {
+                            // Found first dark pixel, count run length
+                            let runLen = 0;
+                            for (let xx = x; xx < 256; xx++) {
+                                if (data[xx * 4] < 128) runLen++;
+                                else break;
+                            }
+                            moduleSize = runLen;
+                            break;
+                        }
+                    }
+
+                    // Find quiet zone offset
+                    let offsetX = 0, offsetY = 0;
+                    outer: for (let y = 0; y < 256; y++) {
+                        for (let x = 0; x < 256; x++) {
+                            const idx = (y * 256 + x) * 4;
+                            if (data[idx] < 128) {
+                                offsetX = x;
+                                offsetY = y;
+                                break outer;
+                            }
+                        }
+                    }
+
+                    // Calculate number of modules
+                    const modules = Math.round((256 - offsetX * 2) / moduleSize);
+
+                    // Build SVG
+                    let rects = '';
+                    for (let row = 0; row < modules; row++) {
+                        for (let col = 0; col < modules; col++) {
+                            const px = Math.round(offsetX + col * moduleSize + moduleSize / 2);
+                            const py = Math.round(offsetY + row * moduleSize + moduleSize / 2);
+                            if (px < 256 && py < 256) {
+                                const idx = (py * 256 + px) * 4;
+                                if (data[idx] < 128) {
+                                    rects += `<rect x="${col}" y="${row}" width="1" height="1"/>`;
+                                }
+                            }
+                        }
+                    }
+
+                    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${modules} ${modules}" width="256" height="256" shape-rendering="crispEdges">` +
+                        `<rect width="${modules}" height="${modules}" fill="#ffffff"/>` +
+                        `<g fill="#000000">${rects}</g></svg>`;
+                    qrSvg.value = svg;
+                }
+
+                function downloadSvg() {
+                    if (!qrSvg.value) return;
+                    const blob = new Blob([qrSvg.value], { type: 'image/svg+xml' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'qrcode.svg';
+                    link.click();
+                    URL.revokeObjectURL(link.href);
+                }
+
+                onBeforeUnmount(() => stopCamera());
+
+                return {
+                    mode, theme, tabs, currentTab,
+                    video, canvasOverlay, scanning, result, cameraError,
+                    inputText, qrSvg,
+                    switchTab, toggleTheme, startCamera, stopCamera, isUrl,
+                    generateQR, downloadSvg
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
