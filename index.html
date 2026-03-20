@@ -118,40 +118,23 @@
                         ></textarea>
                     </div>
 
-                    <!-- Style Options -->
-                    <div class="mb-4 p-3 rounded-xl bg-gray-100 dark:bg-dark-800 flex flex-col gap-3">
-                        <!-- Colors -->
-                        <div class="flex items-center gap-3">
-                            <div class="flex-1 flex items-center gap-2">
-                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">Color</label>
-                                <input type="color" v-model="qrColor" class="w-8 h-8 rounded cursor-pointer border-0 bg-transparent">
-                            </div>
-                            <div class="flex-1 flex items-center gap-2">
-                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">Background</label>
-                                <input type="color" v-model="qrBg" class="w-8 h-8 rounded cursor-pointer border-0 bg-transparent">
-                            </div>
-                        </div>
-                        <!-- Style & ECL -->
-                        <div class="flex items-center gap-3">
-                            <div class="flex-1">
-                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Style</label>
-                                <div class="flex gap-1 p-0.5 bg-gray-200 dark:bg-dark-700 rounded-md">
-                                    <button v-for="s in styles" :key="s.id" @click="qrStyle = s.id"
-                                        class="flex-1 py-1 text-xs font-medium rounded transition-colors"
-                                        :class="qrStyle === s.id ? 'bg-beat text-white' : 'text-gray-500 dark:text-gray-400'"
-                                    >{{ s.label }}</button>
+                    <!-- Style Presets -->
+                    <div class="mb-4 grid grid-cols-3 gap-2">
+                        <button v-for="p in presets" :key="p.id" @click="selectedPreset = p.id"
+                            class="p-2 rounded-xl border-2 transition-all duration-200 flex flex-col items-center gap-1"
+                            :class="selectedPreset === p.id
+                                ? 'border-beat bg-beat/10'
+                                : 'border-gray-200 dark:border-dark-700 hover:border-gray-300 dark:hover:border-dark-600'"
+                        >
+                            <div class="w-10 h-10 rounded-md flex items-center justify-center" :style="{ background: p.bg }">
+                                <div class="w-5 h-5 grid grid-cols-3 grid-rows-3 gap-px">
+                                    <span v-for="i in 9" :key="i" class="block"
+                                        :class="p.radius > 0 ? 'rounded-sm' : ''"
+                                        :style="{ background: [1,2,3,4,6,7,9].includes(i) ? p.color : 'transparent' }"></span>
                                 </div>
                             </div>
-                            <div class="flex-1">
-                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Error correction</label>
-                                <div class="flex gap-1 p-0.5 bg-gray-200 dark:bg-dark-700 rounded-md">
-                                    <button v-for="e in eclLevels" :key="e" @click="qrEcl = e"
-                                        class="flex-1 py-1 text-xs font-medium rounded transition-colors"
-                                        :class="qrEcl === e ? 'bg-beat text-white' : 'text-gray-500 dark:text-gray-400'"
-                                    >{{ e }}</button>
-                                </div>
-                            </div>
-                        </div>
+                            <span class="text-xs font-medium text-gray-600 dark:text-gray-400">{{ p.label }}</span>
+                        </button>
                     </div>
 
                     <button
@@ -165,7 +148,7 @@
 
                     <!-- QR Output -->
                     <div v-if="qrSvg" class="flex flex-col items-center gap-4">
-                        <div class="p-4 bg-white rounded-xl shadow-lg" v-html="qrSvg"></div>
+                        <div class="p-4 rounded-xl shadow-lg" :style="{ background: presets.find(p => p.id === selectedPreset)?.bg || '#fff' }" v-html="qrSvg"></div>
                         <button
                             @click="downloadSvg"
                             class="py-2 px-6 rounded-xl font-medium text-sm transition-all duration-200 bg-accent hover:bg-orange-600 active:bg-orange-700 text-white shadow"
@@ -203,16 +186,18 @@
                 // Generate tab state
                 const inputText = ref('');
                 const qrSvg = ref('');
-                const qrColor = ref('#000000');
-                const qrBg = ref('#ffffff');
-                const qrStyle = ref('square');
-                const qrEcl = ref('M');
-                const styles = [
-                    { id: 'square', label: 'Square', radius: 0 },
-                    { id: 'soft', label: 'Soft', radius: 0.2 },
-                    { id: 'round', label: 'Round', radius: 0.5 }
+                const selectedPreset = ref('classic');
+                const presets = [
+                    { id: 'classic',   label: 'Classic',   color: '#000000', bg: '#ffffff', radius: 0,   ecl: 'M' },
+                    { id: 'soft',      label: 'Soft',      color: '#333333', bg: '#f5f5f5', radius: 0.5, ecl: 'M' },
+                    { id: 'ocean',     label: 'Ocean',     color: '#0e4d92', bg: '#e8f4fd', radius: 0,   ecl: 'M' },
+                    { id: 'forest',    label: 'Forest',    color: '#1b5e20', bg: '#e8f5e9', radius: 0.3, ecl: 'M' },
+                    { id: 'sunset',    label: 'Sunset',    color: '#bf360c', bg: '#fff3e0', radius: 0.5, ecl: 'M' },
+                    { id: 'berry',     label: 'Berry',     color: '#7b1fa2', bg: '#f3e5f5', radius: 0.3, ecl: 'M' },
+                    { id: 'dark',      label: 'Dark',      color: '#e0e0e0', bg: '#1a1a1a', radius: 0,   ecl: 'M' },
+                    { id: 'neon',      label: 'Neon',      color: '#00e676', bg: '#121212', radius: 0.5, ecl: 'H' },
+                    { id: 'coral',     label: 'Coral',     color: '#e76f51', bg: '#ffffff', radius: 0.3, ecl: 'M' },
                 ];
-                const eclLevels = ['L', 'M', 'Q', 'H'];
 
                 const tabs = [
                     { id: 'read', label: 'Read Code', description: 'Scan a QR code or barcode using your device camera.' },
@@ -311,18 +296,18 @@
                 function generateQR() {
                     const text = inputText.value.trim();
                     if (!text) return;
-                    const radius = (styles.find(s => s.id === qrStyle.value) || styles[0]).radius;
+                    const preset = presets.find(p => p.id === selectedPreset.value) || presets[0];
                     const qr = new QRCode({
                         content: text,
                         padding: 4,
                         width: 256,
                         height: 256,
-                        color: qrColor.value,
-                        background: qrBg.value,
-                        ecl: qrEcl.value,
-                        join: radius === 0,
-                        pretty: radius > 0,
-                        radius: radius,
+                        color: preset.color,
+                        background: preset.bg,
+                        ecl: preset.ecl,
+                        join: preset.radius === 0,
+                        pretty: preset.radius > 0,
+                        radius: preset.radius,
                         container: 'svg'
                     });
                     qrSvg.value = qr.svg();
@@ -343,7 +328,7 @@
                 return {
                     mode, theme, tabs, currentTab, formatLabel,
                     video, canvasOverlay, scanning, result, resultFormat, copied, cameraError,
-                    inputText, qrSvg, qrColor, qrBg, qrStyle, qrEcl, styles, eclLevels,
+                    inputText, qrSvg, selectedPreset, presets,
                     switchTab, toggleTheme, startCamera, stopCamera, isUrl, copyResult,
                     generateQR, downloadSvg
                 };
