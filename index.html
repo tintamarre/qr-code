@@ -27,7 +27,6 @@
     <style>
         :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body { margin: 0; min-height: 100vh; }
-        video { transform: scaleX(-1); }
     </style>
 </head>
 <body class="bg-gray-50 dark:bg-dark-900 text-gray-900 dark:text-white transition-colors duration-200">
@@ -92,10 +91,19 @@
 
                     <!-- Result -->
                     <div v-if="result" class="rounded-xl p-4 bg-beat/20 text-beat">
-                        <p class="text-xs font-medium mb-1 opacity-70">{{ formatLabel }} detected:</p>
+                        <div class="flex items-center justify-between mb-1">
+                            <p class="text-xs font-medium opacity-70">{{ formatLabel }} detected:</p>
+                            <button @click="copyResult" class="text-xs font-medium opacity-70 hover:opacity-100 transition-opacity flex items-center gap-1">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path v-if="!copied" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                                    <path v-else stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                </svg>
+                                {{ copied ? 'Copied!' : 'Copy' }}
+                            </button>
+                        </div>
                         <a v-if="isUrl(result)" :href="result" target="_blank" rel="noopener noreferrer"
-                           class="text-sm font-medium underline break-all">{{ result }}</a>
-                        <p v-else class="text-sm font-medium break-all">{{ result }}</p>
+                           class="text-sm font-medium underline break-all select-all">{{ result }}</a>
+                        <p v-else class="text-sm font-medium break-all select-all">{{ result }}</p>
                     </div>
                 </div>
 
@@ -187,6 +195,7 @@
                 const scanning = ref(false);
                 const result = ref('');
                 const resultFormat = ref('');
+                const copied = ref(false);
                 const cameraError = ref('');
                 let stream = null;
                 let animFrameId = null;
@@ -290,6 +299,14 @@
                     try { new URL(text); return true; } catch { return false; }
                 }
 
+                async function copyResult() {
+                    try {
+                        await navigator.clipboard.writeText(result.value);
+                        copied.value = true;
+                        setTimeout(() => { copied.value = false; }, 2000);
+                    } catch (e) {}
+                }
+
                 // QR Generation
                 function generateQR() {
                     const text = inputText.value.trim();
@@ -325,9 +342,9 @@
 
                 return {
                     mode, theme, tabs, currentTab, formatLabel,
-                    video, canvasOverlay, scanning, result, resultFormat, cameraError,
+                    video, canvasOverlay, scanning, result, resultFormat, copied, cameraError,
                     inputText, qrSvg, qrColor, qrBg, qrStyle, qrEcl, styles, eclLevels,
-                    switchTab, toggleTheme, startCamera, stopCamera, isUrl,
+                    switchTab, toggleTheme, startCamera, stopCamera, isUrl, copyResult,
                     generateQR, downloadSvg
                 };
             }
