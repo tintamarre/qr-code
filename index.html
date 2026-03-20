@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
-    <title>QR Code Tools</title>
+    <title>QR & Barcode Tools</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode-svg@1.1.0/lib/qrcode.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -92,7 +92,7 @@
 
                     <!-- Result -->
                     <div v-if="result" class="rounded-xl p-4 bg-beat/20 text-beat">
-                        <p class="text-xs font-medium mb-1 opacity-70">Decoded content:</p>
+                        <p class="text-xs font-medium mb-1 opacity-70">{{ formatLabel }} detected:</p>
                         <a v-if="isUrl(result)" :href="result" target="_blank" rel="noopener noreferrer"
                            class="text-sm font-medium underline break-all">{{ result }}</a>
                         <p v-else class="text-sm font-medium break-all">{{ result }}</p>
@@ -186,6 +186,7 @@
                 const canvasOverlay = ref(null);
                 const scanning = ref(false);
                 const result = ref('');
+                const resultFormat = ref('');
                 const cameraError = ref('');
                 let stream = null;
                 let animFrameId = null;
@@ -205,11 +206,17 @@
                 const eclLevels = ['L', 'M', 'Q', 'H'];
 
                 const tabs = [
-                    { id: 'read', label: 'Read QR Code', description: 'Scan a QR code using your device camera.' },
+                    { id: 'read', label: 'Read Code', description: 'Scan a QR code or barcode using your device camera.' },
                     { id: 'generate', label: 'Generate QR Code', description: 'Create a QR code as SVG from text or URL.' }
                 ];
 
                 const currentTab = computed(() => tabs.find(t => t.id === mode.value));
+                const formatLabel = computed(() => {
+                    const f = resultFormat.value;
+                    if (!f && f !== 0) return 'Code';
+                    const names = { 11: 'QR Code', 0: 'Aztec', 4: 'Code 128', 7: 'EAN-13', 8: 'EAN-8', 14: 'UPC-A', 15: 'UPC-E', 2: 'Codabar', 3: 'Code 39', 5: 'Code 93', 6: 'Data Matrix', 9: 'ITF', 10: 'PDF 417', 12: 'RSS 14', 13: 'RSS Expanded' };
+                    return names[f] || 'Code';
+                });
 
                 // Theme
                 const applyTheme = (t) => document.documentElement.classList.toggle('dark', t === 'dark');
@@ -229,6 +236,7 @@
                 // Camera / QR reading
                 async function startCamera() {
                     result.value = '';
+                    resultFormat.value = '';
                     cameraError.value = '';
                     try {
                         stream = await navigator.mediaDevices.getUserMedia({
@@ -252,7 +260,9 @@
                     if (video.value) video.value.srcObject = null;
                 }
 
-                function scanFrame() {
+                const zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
+
+                async function scanFrame() {
                     if (!scanning.value || !video.value) return;
                     const v = video.value;
                     if (v.readyState === v.HAVE_ENOUGH_DATA) {
@@ -261,12 +271,16 @@
                         canvas.height = v.videoHeight;
                         const ctx = canvas.getContext('2d', { willReadFrequently: true });
                         ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                        const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: 'dontInvert' });
-                        if (code && code.data) {
-                            result.value = code.data;
-                            stopCamera();
-                            return;
+                        try {
+                            const code = zxingReader.decodeFromCanvas(canvas);
+                            if (code && code.getText()) {
+                                result.value = code.getText();
+                                resultFormat.value = code.getBarcodeFormat();
+                                stopCamera();
+                                return;
+                            }
+                        } catch (e) {
+                            // No code found in this frame, continue scanning
                         }
                     }
                     animFrameId = requestAnimationFrame(scanFrame);
@@ -310,8 +324,8 @@
                 onBeforeUnmount(() => stopCamera());
 
                 return {
-                    mode, theme, tabs, currentTab,
-                    video, canvasOverlay, scanning, result, cameraError,
+                    mode, theme, tabs, currentTab, formatLabel,
+                    video, canvasOverlay, scanning, result, resultFormat, cameraError,
                     inputText, qrSvg, qrColor, qrBg, qrStyle, qrEcl, styles, eclLevels,
                     switchTab, toggleTheme, startCamera, stopCamera, isUrl,
                     generateQR, downloadSvg
