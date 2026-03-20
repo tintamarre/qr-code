@@ -110,6 +110,42 @@
                         ></textarea>
                     </div>
 
+                    <!-- Style Options -->
+                    <div class="mb-4 p-3 rounded-xl bg-gray-100 dark:bg-dark-800 flex flex-col gap-3">
+                        <!-- Colors -->
+                        <div class="flex items-center gap-3">
+                            <div class="flex-1 flex items-center gap-2">
+                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">Color</label>
+                                <input type="color" v-model="qrColor" class="w-8 h-8 rounded cursor-pointer border-0 bg-transparent">
+                            </div>
+                            <div class="flex-1 flex items-center gap-2">
+                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 whitespace-nowrap">Background</label>
+                                <input type="color" v-model="qrBg" class="w-8 h-8 rounded cursor-pointer border-0 bg-transparent">
+                            </div>
+                        </div>
+                        <!-- Style & ECL -->
+                        <div class="flex items-center gap-3">
+                            <div class="flex-1">
+                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Style</label>
+                                <div class="flex gap-1 p-0.5 bg-gray-200 dark:bg-dark-700 rounded-md">
+                                    <button v-for="s in styles" :key="s.id" @click="qrStyle = s.id"
+                                        class="flex-1 py-1 text-xs font-medium rounded transition-colors"
+                                        :class="qrStyle === s.id ? 'bg-beat text-white' : 'text-gray-500 dark:text-gray-400'"
+                                    >{{ s.label }}</button>
+                                </div>
+                            </div>
+                            <div class="flex-1">
+                                <label class="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1 block">Error correction</label>
+                                <div class="flex gap-1 p-0.5 bg-gray-200 dark:bg-dark-700 rounded-md">
+                                    <button v-for="e in eclLevels" :key="e" @click="qrEcl = e"
+                                        class="flex-1 py-1 text-xs font-medium rounded transition-colors"
+                                        :class="qrEcl === e ? 'bg-beat text-white' : 'text-gray-500 dark:text-gray-400'"
+                                    >{{ e }}</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <button
                         @click="generateQR"
                         :disabled="!inputText.trim()"
@@ -157,6 +193,16 @@
                 // Generate tab state
                 const inputText = ref('');
                 const qrSvg = ref('');
+                const qrColor = ref('#000000');
+                const qrBg = ref('#ffffff');
+                const qrStyle = ref('square');
+                const qrEcl = ref('M');
+                const styles = [
+                    { id: 'square', label: 'Square', radius: 0 },
+                    { id: 'soft', label: 'Soft', radius: 0.2 },
+                    { id: 'round', label: 'Round', radius: 0.5 }
+                ];
+                const eclLevels = ['L', 'M', 'Q', 'H'];
 
                 const tabs = [
                     { id: 'read', label: 'Read QR Code', description: 'Scan a QR code using your device camera.' },
@@ -234,15 +280,18 @@
                 function generateQR() {
                     const text = inputText.value.trim();
                     if (!text) return;
+                    const radius = (styles.find(s => s.id === qrStyle.value) || styles[0]).radius;
                     const qr = new QRCode({
                         content: text,
                         padding: 4,
                         width: 256,
                         height: 256,
-                        color: '#000000',
-                        background: '#ffffff',
-                        ecl: 'M',
-                        join: true,
+                        color: qrColor.value,
+                        background: qrBg.value,
+                        ecl: qrEcl.value,
+                        join: radius === 0,
+                        pretty: radius > 0,
+                        radius: radius,
                         container: 'svg'
                     });
                     qrSvg.value = qr.svg();
@@ -263,7 +312,7 @@
                 return {
                     mode, theme, tabs, currentTab,
                     video, canvasOverlay, scanning, result, cameraError,
-                    inputText, qrSvg,
+                    inputText, qrSvg, qrColor, qrBg, qrStyle, qrEcl, styles, eclLevels,
                     switchTab, toggleTheme, startCamera, stopCamera, isUrl,
                     generateQR, downloadSvg
                 };
