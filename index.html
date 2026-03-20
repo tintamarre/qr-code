@@ -7,7 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <title>QR Code Tools</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/qr-creator@1.0.0/dist/qr-creator.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-svg@1.1.0/lib/qrcode.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -234,92 +234,18 @@
                 function generateQR() {
                     const text = inputText.value.trim();
                     if (!text) return;
-                    // Create a temporary container for qr-creator to render into
-                    const container = document.createElement('div');
-                    QrCreator.render({
-                        text: text,
-                        radius: 0,
-                        ecLevel: 'M',
-                        fill: '#000000',
+                    const qr = new QRCode({
+                        content: text,
+                        padding: 4,
+                        width: 256,
+                        height: 256,
+                        color: '#000000',
                         background: '#ffffff',
-                        size: 256
-                    }, container);
-                    // qr-creator renders a canvas, so we convert to SVG manually
-                    // Actually, qr-creator only outputs canvas. Let's build SVG ourselves.
-                    qrSvg.value = '';
-                    generateSvgQR(text);
-                }
-
-                function generateSvgQR(text) {
-                    // Use qr-creator to render to a canvas, then extract pixel data to build SVG
-                    const canvas = document.createElement('canvas');
-                    canvas.width = 256;
-                    canvas.height = 256;
-                    QrCreator.render({
-                        text: text,
-                        radius: 0,
-                        ecLevel: 'M',
-                        fill: '#000000',
-                        background: '#ffffff',
-                        size: 256
-                    }, canvas);
-
-                    // Read pixel data and find QR modules
-                    const ctx = canvas.getContext('2d');
-                    const imageData = ctx.getImageData(0, 0, 256, 256);
-                    const data = imageData.data;
-
-                    // Detect module size by finding first dark pixel run
-                    let moduleSize = 1;
-                    for (let x = 0; x < 256; x++) {
-                        const idx = x * 4;
-                        if (data[idx] < 128) {
-                            // Found first dark pixel, count run length
-                            let runLen = 0;
-                            for (let xx = x; xx < 256; xx++) {
-                                if (data[xx * 4] < 128) runLen++;
-                                else break;
-                            }
-                            moduleSize = runLen;
-                            break;
-                        }
-                    }
-
-                    // Find quiet zone offset
-                    let offsetX = 0, offsetY = 0;
-                    outer: for (let y = 0; y < 256; y++) {
-                        for (let x = 0; x < 256; x++) {
-                            const idx = (y * 256 + x) * 4;
-                            if (data[idx] < 128) {
-                                offsetX = x;
-                                offsetY = y;
-                                break outer;
-                            }
-                        }
-                    }
-
-                    // Calculate number of modules
-                    const modules = Math.round((256 - offsetX * 2) / moduleSize);
-
-                    // Build SVG
-                    let rects = '';
-                    for (let row = 0; row < modules; row++) {
-                        for (let col = 0; col < modules; col++) {
-                            const px = Math.round(offsetX + col * moduleSize + moduleSize / 2);
-                            const py = Math.round(offsetY + row * moduleSize + moduleSize / 2);
-                            if (px < 256 && py < 256) {
-                                const idx = (py * 256 + px) * 4;
-                                if (data[idx] < 128) {
-                                    rects += `<rect x="${col}" y="${row}" width="1" height="1"/>`;
-                                }
-                            }
-                        }
-                    }
-
-                    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${modules} ${modules}" width="256" height="256" shape-rendering="crispEdges">` +
-                        `<rect width="${modules}" height="${modules}" fill="#ffffff"/>` +
-                        `<g fill="#000000">${rects}</g></svg>`;
-                    qrSvg.value = svg;
+                        ecl: 'M',
+                        join: true,
+                        container: 'svg-viewbox'
+                    });
+                    qrSvg.value = qr.svg();
                 }
 
                 function downloadSvg() {
