@@ -105,6 +105,42 @@
                            class="text-sm font-medium underline break-all select-all">{{ result }}</a>
                         <p v-else class="text-sm font-medium break-all select-all">{{ result }}</p>
                     </div>
+
+                    <!-- Book reference (ISBN) -->
+                    <div v-if="result && isIsbn(result)" class="mt-4">
+                        <div v-if="bookLoading" class="rounded-xl p-4 bg-gray-100 dark:bg-dark-800 flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+                            <svg class="animate-spin w-5 h-5 text-beat" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                            </svg>
+                            Recherche de la référence du livre…
+                        </div>
+
+                        <div v-else-if="bookInfo" class="rounded-xl p-4 bg-white dark:bg-dark-800 border border-gray-200 dark:border-dark-700 shadow-sm">
+                            <div class="flex gap-4">
+                                <img v-if="bookInfo.cover && !bookCoverError" :src="bookInfo.cover" @error="bookCoverError = true" alt=""
+                                     class="w-20 rounded-md shadow shrink-0 object-cover self-start" />
+                                <div v-else class="w-20 h-28 rounded-md bg-gray-100 dark:bg-dark-700 flex items-center justify-center shrink-0 text-gray-300 dark:text-gray-600">
+                                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                                    </svg>
+                                </div>
+                                <div class="min-w-0">
+                                    <h3 class="font-bold text-base leading-snug">{{ bookInfo.title }}</h3>
+                                    <p v-if="bookInfo.authors.length" class="text-sm text-gray-600 dark:text-gray-400 mt-0.5">{{ bookInfo.authors.join(', ') }}</p>
+                                    <p v-if="bookInfo.publisher || bookInfo.year" class="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                                        {{ [bookInfo.publisher, bookInfo.year].filter(Boolean).join(' · ') }}
+                                    </p>
+                                    <span class="inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-full bg-beat/15 text-beat">{{ bookInfo.sourceLabel }}</span>
+                                </div>
+                            </div>
+                            <p v-if="bookInfo.summary" class="text-sm text-gray-600 dark:text-gray-400 mt-3 leading-relaxed">{{ bookInfo.summary }}</p>
+                            <a v-if="bookInfo.sourceUrl" :href="bookInfo.sourceUrl" target="_blank" rel="noopener noreferrer"
+                               class="inline-block mt-3 text-sm font-medium text-accent hover:underline">Voir sur {{ bookInfo.sourceLabel }} →</a>
+                        </div>
+
+                        <div v-else-if="bookError" class="rounded-xl p-3 text-sm bg-accent/15 text-accent">{{ bookError }}</div>
+                    </div>
                 </div>
 
                 <!-- Generate QR Code Tab -->
@@ -183,6 +219,12 @@
                 let stream = null;
                 let animFrameId = null;
 
+                // Book lookup state (ISBN)
+                const bookInfo = ref(null);
+                const bookLoading = ref(false);
+                const bookError = ref('');
+                const bookCoverError = ref(false);
+
                 // Generate tab state
                 const inputText = ref('');
                 const qrSvg = ref('');
@@ -232,6 +274,10 @@
                     result.value = '';
                     resultFormat.value = '';
                     cameraError.value = '';
+                    bookInfo.value = null;
+                    bookError.value = '';
+                    bookLoading.value = false;
+                    bookCoverError.value = false;
                     try {
                         stream = await navigator.mediaDevices.getUserMedia({
                             video: { facingMode: 'environment' }
@@ -271,6 +317,7 @@
                                 result.value = code.getText();
                                 resultFormat.value = code.getBarcodeFormat();
                                 stopCamera();
+                                if (isIsbn(result.value)) lookupBook(result.value);
                                 return;
                             }
                         } catch (e) {
@@ -290,6 +337,111 @@
                         copied.value = true;
                         setTimeout(() => { copied.value = false; }, 2000);
                     } catch (e) {}
+                }
+
+                // ISBN / book lookup
+                function isIsbn(text) {
+                    const c = (text || '').replace(/[^0-9Xx]/g, '');
+                    if (c.length === 13 && (c.startsWith('978') || c.startsWith('979'))) return true;
+                    if (c.length === 10) return true;
+                    return false;
+                }
+
+                async function lookupBook(raw) {
+                    const isbn = raw.replace(/[^0-9Xx]/g, '');
+                    bookLoading.value = true;
+                    bookInfo.value = null;
+                    bookError.value = '';
+                    bookCoverError.value = false;
+                    try {
+                        let info = await fetchBnf(isbn);
+                        if (!info) info = await fetchGoogleBooks(isbn);
+                        if (info) {
+                            if (!info.cover) info.cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`;
+                            bookInfo.value = info;
+                        } else {
+                            bookError.value = 'Aucune référence trouvée pour cet ISBN.';
+                        }
+                    } catch (e) {
+                        bookError.value = 'Impossible de récupérer la référence du livre.';
+                    } finally {
+                        bookLoading.value = false;
+                    }
+                }
+
+                // Bibliothèque nationale de France — best coverage for French books (dépôt légal)
+                async function fetchBnf(isbn) {
+                    const url = `https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&query=bib.isbn%20all%20%22${isbn}%22&recordSchema=unimarcxchange&maximumRecords=1`;
+                    const res = await fetch(url);
+                    if (!res.ok) return null;
+                    const xml = new DOMParser().parseFromString(await res.text(), 'application/xml');
+                    const fields = Array.from(xml.getElementsByTagNameNS('*', 'datafield'));
+                    if (!fields.length) return null;
+
+                    const sub = (f, code) => {
+                        for (const s of f.getElementsByTagNameNS('*', 'subfield')) {
+                            if (s.getAttribute('code') === code) return s.textContent.trim();
+                        }
+                        return '';
+                    };
+                    const field = (tag) => fields.find(f => f.getAttribute('tag') === tag);
+                    const get = (tag, code) => { const f = field(tag); return f ? sub(f, code) : ''; };
+
+                    const title = get('200', 'a');
+                    if (!title) return null;
+                    const subtitle = get('200', 'e');
+
+                    const authors = fields
+                        .filter(f => ['700', '701', '702'].includes(f.getAttribute('tag')))
+                        .map(f => [sub(f, 'b'), sub(f, 'a')].filter(Boolean).join(' '))
+                        .filter(Boolean);
+                    if (!authors.length) { const f = get('200', 'f'); if (f) authors.push(f); }
+
+                    let publisher = '', year = '';
+                    for (const tag of ['214', '210']) {
+                        const f = field(tag);
+                        if (!f) continue;
+                        if (!publisher) publisher = sub(f, 'c');
+                        if (!year) year = (sub(f, 'd').match(/\d{4}/) || [''])[0];
+                    }
+
+                    const arkEl = xml.querySelector('[id^="ark:"]');
+                    const ark = arkEl ? arkEl.getAttribute('id') : '';
+
+                    return {
+                        isbn,
+                        title: subtitle ? `${title} — ${subtitle}` : title,
+                        authors,
+                        publisher,
+                        year,
+                        summary: get('330', 'a'),
+                        cover: '',
+                        sourceLabel: 'BnF',
+                        sourceUrl: ark ? `https://catalogue.bnf.fr/${ark}` : `https://catalogue.bnf.fr/rechercher.do?motRecherche=${isbn}`
+                    };
+                }
+
+                // Fallback for non-French titles BnF may not hold
+                async function fetchGoogleBooks(isbn) {
+                    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`);
+                    if (!res.ok) return null;
+                    const data = await res.json();
+                    if (!data.totalItems || !data.items) return null;
+                    const v = data.items[0].volumeInfo || {};
+                    if (!v.title) return null;
+                    const links = v.imageLinks || {};
+                    const cover = (links.thumbnail || links.smallThumbnail || '').replace('http://', 'https://');
+                    return {
+                        isbn,
+                        title: v.subtitle ? `${v.title} — ${v.subtitle}` : v.title,
+                        authors: v.authors || [],
+                        publisher: v.publisher || '',
+                        year: (v.publishedDate || '').slice(0, 4),
+                        summary: v.description || '',
+                        cover,
+                        sourceLabel: 'Google Books',
+                        sourceUrl: v.infoLink || v.canonicalVolumeLink || ''
+                    };
                 }
 
                 // QR Generation
@@ -333,6 +485,7 @@
                 return {
                     mode, theme, tabs, currentTab, formatLabel,
                     video, canvasOverlay, scanning, result, resultFormat, copied, cameraError,
+                    bookInfo, bookLoading, bookError, bookCoverError, isIsbn,
                     inputText, qrSvg, selectedPreset, presets,
                     switchTab, toggleTheme, startCamera, stopCamera, isUrl, copyResult,
                     selectPreset, generateQR, downloadSvg
