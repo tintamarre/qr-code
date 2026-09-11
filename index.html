@@ -371,7 +371,10 @@
 
                 // Bibliothèque nationale de France — best coverage for French books (dépôt légal)
                 async function fetchBnf(isbn) {
-                    const url = `https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&query=bib.isbn%20all%20%22${isbn}%22&recordSchema=unimarcxchange&maximumRecords=1`;
+                    // Search the EAN index (matches the scanned barcode even when BnF
+                    // catalogued the book under its older ISBN-10), falling back to the ISBN index.
+                    const query = `bib.ean all "${isbn}" or bib.isbn all "${isbn}"`;
+                    const url = `https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve&query=${encodeURIComponent(query)}&recordSchema=unimarcxchange&maximumRecords=1`;
                     const res = await fetch(url);
                     if (!res.ok) return null;
                     const xml = new DOMParser().parseFromString(await res.text(), 'application/xml');
