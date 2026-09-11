@@ -356,6 +356,7 @@
                     try {
                         let info = await fetchBnf(isbn);
                         if (!info) info = await fetchGoogleBooks(isbn);
+                        if (!info) info = await fetchOpenLibrary(isbn);
                         if (info) {
                             if (!info.cover) info.cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`;
                             bookInfo.value = info;
@@ -444,6 +445,27 @@
                         cover,
                         sourceLabel: 'Google Books',
                         sourceUrl: v.infoLink || v.canonicalVolumeLink || ''
+                    };
+                }
+
+                // Last-resort fallback (e.g. when Google Books quota is exhausted)
+                async function fetchOpenLibrary(isbn) {
+                    const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`);
+                    if (!res.ok) return null;
+                    const data = await res.json();
+                    const b = data[`ISBN:${isbn}`];
+                    if (!b || !b.title) return null;
+                    const cover = (b.cover && (b.cover.medium || b.cover.large || b.cover.small)) || '';
+                    return {
+                        isbn,
+                        title: b.subtitle ? `${b.title} — ${b.subtitle}` : b.title,
+                        authors: (b.authors || []).map(a => a.name).filter(Boolean),
+                        publisher: (b.publishers && b.publishers[0] && b.publishers[0].name) || '',
+                        year: (String(b.publish_date || '').match(/\d{4}/) || [''])[0],
+                        summary: (b.notes && (b.notes.value || b.notes)) || '',
+                        cover,
+                        sourceLabel: 'Open Library',
+                        sourceUrl: b.url || ''
                     };
                 }
 
