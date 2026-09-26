@@ -2,14 +2,15 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <title>QR & Barcode Tools</title>
-    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode-svg@1.1.0/lib/qrcode.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.5.43/dist/vue.global.prod.js" integrity="sha384-EAm39cvdifYiZjQQxCxStLasDodQMYokBrN5XPuJ7aC/JsQ4vyEUCy/+6hXpcBOW" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-svg@1.1.0/lib/qrcode.js" integrity="sha384-kL5BmwJsSE0BaBvlx4Eacvk48g6NfWEoWXNbaQGSrFrIXqJEu3BfrW7KRHmiJ1Tt" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js" integrity="sha384-ylLhng89kD62+PVK1cjm4rAYg69zDlGrbbSfAE2Eb8Xqf8RoAQCMcRoUXZh7pAPC" crossorigin="anonymous"></script>
+    <!-- Pinned; no SRI because cdn.tailwindcss.com sends no CORS header -->
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -63,11 +64,11 @@
                 <!-- Read QR Code Tab -->
                 <div v-if="mode === 'read'">
                     <div class="relative rounded-xl overflow-hidden bg-black mb-4">
-                        <video ref="video" autoplay playsinline class="w-full block"></video>
+                        <video ref="video" autoplay playsinline muted class="w-full block"></video>
                         <canvas ref="canvasOverlay" class="hidden"></canvas>
-                        <!-- Scanning indicator -->
+                        <!-- Scanning indicator (the whole frame is decoded; this is only a hint) -->
                         <div v-if="scanning && !result" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div class="w-48 h-48 border-2 border-beat rounded-lg opacity-50"></div>
+                            <div class="w-3/4 aspect-[3/2] border-2 border-beat rounded-lg opacity-50"></div>
                         </div>
                     </div>
 
@@ -75,10 +76,11 @@
                         {{ cameraError }}
                     </div>
 
-                    <div v-if="!scanning && !cameraError" class="mb-4">
+                    <div v-if="!scanning" class="mb-4">
                         <button
                             @click="startCamera"
-                            class="w-full py-3 px-6 rounded-xl font-bold text-lg transition-all duration-200 touch-manipulation shadow-lg bg-beat hover:bg-teal-600 active:bg-teal-700 text-white"
+                            :disabled="starting"
+                            class="disabled:opacity-60 w-full py-3 px-6 rounded-xl font-bold text-lg transition-all duration-200 touch-manipulation shadow-lg bg-beat hover:bg-teal-600 active:bg-teal-700 text-white"
                         >Start Camera</button>
                     </div>
 
@@ -212,12 +214,15 @@
                 const video = ref(null);
                 const canvasOverlay = ref(null);
                 const scanning = ref(false);
+                const starting = ref(false);
                 const result = ref('');
                 const resultFormat = ref('');
                 const copied = ref(false);
                 const cameraError = ref('');
                 let stream = null;
-                let animFrameId = null;
+                let scanTimer = null;
+                let cameraSession = 0; // bumped on every start/stop to drop stale async work
+                let lookupSession = 0;
 
                 // Book lookup state (ISBN)
                 const bookInfo = ref(null);
@@ -247,12 +252,13 @@
                 ];
 
                 const currentTab = computed(() => tabs.find(t => t.id === mode.value));
-                const formatLabel = computed(() => {
-                    const f = resultFormat.value;
-                    if (!f && f !== 0) return 'Code';
-                    const names = { 11: 'QR Code', 0: 'Aztec', 4: 'Code 128', 7: 'EAN-13', 8: 'EAN-8', 14: 'UPC-A', 15: 'UPC-E', 2: 'Codabar', 3: 'Code 39', 5: 'Code 93', 6: 'Data Matrix', 9: 'ITF', 10: 'PDF 417', 12: 'RSS 14', 13: 'RSS Expanded' };
-                    return names[f] || 'Code';
-                });
+                // resultFormat holds a normalized key shared by ZXing and the native BarcodeDetector
+                const formatNames = {
+                    qr_code: 'QR Code', aztec: 'Aztec', data_matrix: 'Data Matrix', pdf417: 'PDF 417',
+                    ean_13: 'EAN-13', ean_8: 'EAN-8', upc_a: 'UPC-A', upc_e: 'UPC-E',
+                    code_128: 'Code 128', code_39: 'Code 39', code_93: 'Code 93', codabar: 'Codabar', itf: 'ITF'
+                };
+                const formatLabel = computed(() => formatNames[resultFormat.value] || 'Code');
 
                 // Theme
                 const applyTheme = (t) => document.documentElement.classList.toggle('dark', t === 'dark');
@@ -271,6 +277,10 @@
 
                 // Camera / QR reading
                 async function startCamera() {
+                    if (starting.value) return;
+                    stopCamera();
+                    const session = ++cameraSession;
+                    lookupSession++;
                     result.value = '';
                     resultFormat.value = '';
                     cameraError.value = '';
@@ -278,57 +288,149 @@
                     bookError.value = '';
                     bookLoading.value = false;
                     bookCoverError.value = false;
+                    starting.value = true;
                     try {
-                        stream = await navigator.mediaDevices.getUserMedia({
-                            video: { facingMode: 'environment' }
+                        const s = await navigator.mediaDevices.getUserMedia({
+                            video: {
+                                facingMode: 'environment',
+                                // Default is often 640x480, too coarse for EAN-13 or dense QR codes
+                                width: { ideal: 1920 },
+                                height: { ideal: 1080 }
+                            }
                         });
                         await nextTick();
-                        if (video.value) {
-                            video.value.srcObject = stream;
-                            scanning.value = true;
-                            scanFrame();
+                        // Tab switched or camera stopped while the permission prompt was open
+                        if (session !== cameraSession || mode.value !== 'read' || !video.value) {
+                            s.getTracks().forEach(t => t.stop());
+                            return;
                         }
+                        stream = s;
+                        enableAutofocus(s.getVideoTracks()[0]);
+                        video.value.srcObject = s;
+                        video.value.play().catch(() => {});
+                        scanning.value = true;
+                        scanTick = 0;
+                        scanFrame(session);
                     } catch (err) {
-                        cameraError.value = 'Could not access camera. Make sure you allow camera permissions and use HTTPS.';
+                        if (session === cameraSession) {
+                            cameraError.value = 'Could not access camera. Make sure you allow camera permissions and use HTTPS.';
+                        }
+                    } finally {
+                        if (session === cameraSession) starting.value = false;
                     }
                 }
 
+                async function enableAutofocus(track) {
+                    try {
+                        const caps = track.getCapabilities ? track.getCapabilities() : {};
+                        if (caps.focusMode && caps.focusMode.includes('continuous')) {
+                            await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                        }
+                    } catch (e) {}
+                }
+
                 function stopCamera() {
+                    cameraSession++;
+                    starting.value = false;
                     scanning.value = false;
-                    if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+                    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
                     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
                     if (video.value) video.value.srcObject = null;
                 }
 
-                const zxingReader = new ZXingBrowser.BrowserMultiFormatReader();
+                // ZXing DecodeHintType is not exported by the browser bundle: POSSIBLE_FORMATS = 2, TRY_HARDER = 3
+                const BF = ZXingBrowser.BarcodeFormat;
+                const zxingReader = new ZXingBrowser.BrowserMultiFormatReader(new Map([
+                    [2, [BF.QR_CODE, BF.DATA_MATRIX, BF.AZTEC, BF.PDF_417, BF.EAN_13, BF.EAN_8, BF.UPC_A, BF.UPC_E,
+                         BF.CODE_128, BF.CODE_39, BF.CODE_93, BF.CODABAR, BF.ITF]],
+                    [3, true]
+                ]));
+                const zxingFormatKey = (f) => {
+                    const key = String(BF[f] || '').toLowerCase();
+                    return key === 'pdf_417' ? 'pdf417' : key;
+                };
 
-                async function scanFrame() {
-                    if (!scanning.value || !video.value) return;
+                // Native detector (Chrome/Android, …) is faster and more robust than ZXing when available
+                let nativeDetector = null;
+                const nativeReady = (async () => {
+                    if (!('BarcodeDetector' in window)) return;
+                    try {
+                        const supported = await BarcodeDetector.getSupportedFormats();
+                        const formats = Object.keys(formatNames).filter(f => supported.includes(f));
+                        if (formats.length) nativeDetector = new BarcodeDetector({ formats });
+                    } catch (e) {}
+                })();
+
+                const SCAN_INTERVAL_MS = 100;
+                const MAX_SCAN_SIDE = 1280;
+                let scanTick = 0;
+
+                function grabFrame(v) {
+                    const canvas = canvasOverlay.value;
+                    const scale = Math.min(1, MAX_SCAN_SIDE / Math.max(v.videoWidth, v.videoHeight));
+                    const w = Math.round(v.videoWidth * scale);
+                    const h = Math.round(v.videoHeight * scale);
+                    // Only resize when needed: assigning width/height reallocates the buffer
+                    if (canvas.width !== w) canvas.width = w;
+                    if (canvas.height !== h) canvas.height = h;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    ctx.drawImage(v, 0, 0, w, h);
+                    return { canvas, ctx, w, h };
+                }
+
+                // Light-on-dark codes (e.g. the Dark and Neon presets) are not decoded by ZXing as-is
+                function invertCanvas({ ctx, w, h }) {
+                    const img = ctx.getImageData(0, 0, w, h);
+                    const d = img.data;
+                    for (let i = 0; i < d.length; i += 4) {
+                        d[i] = 255 - d[i]; d[i + 1] = 255 - d[i + 1]; d[i + 2] = 255 - d[i + 2];
+                    }
+                    ctx.putImageData(img, 0, 0);
+                }
+
+                function decodeZxing(canvas) {
+                    try {
+                        const code = zxingReader.decodeFromCanvas(canvas);
+                        if (code && code.getText()) return { text: code.getText(), format: zxingFormatKey(code.getBarcodeFormat()) };
+                    } catch (e) {
+                        // No code found in this frame
+                    }
+                    return null;
+                }
+
+                async function scanFrame(session) {
+                    if (session !== cameraSession || !scanning.value || !video.value) return;
                     const v = video.value;
-                    if (v.readyState === v.HAVE_ENOUGH_DATA) {
-                        const canvas = canvasOverlay.value;
-                        canvas.width = v.videoWidth;
-                        canvas.height = v.videoHeight;
-                        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-                        try {
-                            const code = zxingReader.decodeFromCanvas(canvas);
-                            if (code && code.getText()) {
-                                result.value = code.getText();
-                                resultFormat.value = code.getBarcodeFormat();
-                                stopCamera();
-                                if (isIsbn(result.value)) lookupBook(result.value);
-                                return;
-                            }
-                        } catch (e) {
-                            // No code found in this frame, continue scanning
+                    let found = null;
+                    if (v.readyState >= v.HAVE_CURRENT_DATA && v.videoWidth) {
+                        // Alternate between a normal pass and an inverted pass
+                        const inverted = scanTick++ % 2 === 1;
+                        await nativeReady;
+                        if (!inverted && nativeDetector) {
+                            try {
+                                const codes = await nativeDetector.detect(v);
+                                if (codes.length) found = { text: codes[0].rawValue, format: codes[0].format };
+                            } catch (e) {}
+                        } else {
+                            const frame = grabFrame(v);
+                            if (inverted) invertCanvas(frame);
+                            found = decodeZxing(frame.canvas);
                         }
                     }
-                    animFrameId = requestAnimationFrame(scanFrame);
+                    if (session !== cameraSession) return;
+                    if (found && found.text) {
+                        result.value = found.text;
+                        resultFormat.value = found.format;
+                        stopCamera();
+                        if (isIsbn(found.text)) lookupBook(found.text);
+                        return;
+                    }
+                    scanTimer = setTimeout(() => scanFrame(session), SCAN_INTERVAL_MS);
                 }
 
                 function isUrl(text) {
-                    try { new URL(text); return true; } catch { return false; }
+                    // Only web links: a scanned "javascript:" URL must never become a clickable link
+                    try { return ['http:', 'https:'].includes(new URL(text).protocol); } catch { return false; }
                 }
 
                 async function copyResult() {
@@ -341,33 +443,50 @@
 
                 // ISBN / book lookup
                 function isIsbn(text) {
-                    const c = (text || '').replace(/[^0-9Xx]/g, '');
-                    if (c.length === 13 && (c.startsWith('978') || c.startsWith('979'))) return true;
-                    if (c.length === 10) return true;
+                    const t = (text || '').trim();
+                    // Only digits with optional dashes/spaces (ISBN-10 may end with X), not arbitrary text containing digits
+                    if (!/^[0-9][0-9\- ]*[0-9Xx]$/.test(t)) return false;
+                    const c = t.replace(/[\- ]/g, '').toUpperCase();
+                    if (c.length === 13 && /^97[89]\d{10}$/.test(c)) {
+                        const sum = [...c].reduce((acc, d, i) => acc + Number(d) * (i % 2 ? 3 : 1), 0);
+                        return sum % 10 === 0;
+                    }
+                    if (c.length === 10 && /^\d{9}[\dX]$/.test(c)) {
+                        const sum = [...c].reduce((acc, d, i) => acc + (d === 'X' ? 10 : Number(d)) * (10 - i), 0);
+                        return sum % 11 === 0;
+                    }
                     return false;
                 }
 
                 async function lookupBook(raw) {
-                    const isbn = raw.replace(/[^0-9Xx]/g, '');
+                    const isbn = raw.replace(/[^0-9Xx]/g, '').toUpperCase();
+                    const session = ++lookupSession;
                     bookLoading.value = true;
                     bookInfo.value = null;
                     bookError.value = '';
                     bookCoverError.value = false;
-                    try {
-                        let info = await fetchBnf(isbn);
-                        if (!info) info = await fetchGoogleBooks(isbn);
-                        if (!info) info = await fetchOpenLibrary(isbn);
-                        if (info) {
-                            if (!info.cover) info.cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`;
-                            bookInfo.value = info;
-                        } else {
-                            bookError.value = 'Aucune référence trouvée pour cet ISBN.';
+                    let info = null;
+                    let failures = 0;
+                    const sources = [fetchBnf, fetchGoogleBooks, fetchOpenLibrary];
+                    // Each source fails independently so a network/CORS error still falls through to the next one
+                    for (const source of sources) {
+                        try {
+                            info = await source(isbn);
+                        } catch (e) {
+                            failures++;
                         }
-                    } catch (e) {
-                        bookError.value = 'Impossible de récupérer la référence du livre.';
-                    } finally {
-                        bookLoading.value = false;
+                        if (info) break;
                     }
+                    if (session !== lookupSession) return; // a newer scan started meanwhile
+                    if (info) {
+                        if (!info.cover) info.cover = `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`;
+                        bookInfo.value = info;
+                    } else if (failures === sources.length) {
+                        bookError.value = 'Impossible de récupérer la référence du livre.';
+                    } else {
+                        bookError.value = 'Aucune référence trouvée pour cet ISBN.';
+                    }
+                    bookLoading.value = false;
                 }
 
                 // Bibliothèque nationale de France — best coverage for French books (dépôt légal)
@@ -502,14 +621,15 @@
                     link.href = URL.createObjectURL(blob);
                     link.download = 'qrcode.svg';
                     link.click();
-                    URL.revokeObjectURL(link.href);
+                    // Revoking synchronously can cancel the download in Safari/Firefox
+                    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
                 }
 
                 onBeforeUnmount(() => stopCamera());
 
                 return {
                     mode, theme, tabs, currentTab, formatLabel,
-                    video, canvasOverlay, scanning, result, resultFormat, copied, cameraError,
+                    video, canvasOverlay, scanning, starting, result, resultFormat, copied, cameraError,
                     bookInfo, bookLoading, bookError, bookCoverError, isIsbn,
                     inputText, qrSvg, selectedPreset, presets,
                     switchTab, toggleTheme, startCamera, stopCamera, isUrl, copyResult,
