@@ -8,7 +8,8 @@
     <title>QR & Barcode Tools</title>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.5.43/dist/vue.global.prod.js" integrity="sha384-EAm39cvdifYiZjQQxCxStLasDodQMYokBrN5XPuJ7aC/JsQ4vyEUCy/+6hXpcBOW" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode-svg@1.1.0/lib/qrcode.js" integrity="sha384-kL5BmwJsSE0BaBvlx4Eacvk48g6NfWEoWXNbaQGSrFrIXqJEu3BfrW7KRHmiJ1Tt" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js" integrity="sha384-ylLhng89kD62+PVK1cjm4rAYg69zDlGrbbSfAE2Eb8Xqf8RoAQCMcRoUXZh7pAPC" crossorigin="anonymous"></script>
+    <!-- BarcodeDetector ponyfill (zxing-cpp compiled to WebAssembly; the .wasm is fetched from jsDelivr on first use) -->
+    <script src="https://cdn.jsdelivr.net/npm/barcode-detector@3.2.2/dist/iife/ponyfill.js" integrity="sha384-KJVUIUGb4pmfpWXfD8j3y9ARn6KoGC2vPC/wNUX1O1ZkYemh0BsuvsmdEU2+wS7O" crossorigin="anonymous"></script>
     <!-- Pinned; no SRI because cdn.tailwindcss.com sends no CORS header -->
     <script src="https://cdn.tailwindcss.com/3.4.17"></script>
     <script>
@@ -65,7 +66,6 @@
                 <div v-if="mode === 'read'">
                     <div class="relative rounded-xl overflow-hidden bg-black mb-4">
                         <video ref="video" autoplay playsinline muted class="w-full block"></video>
-                        <canvas ref="canvasOverlay" class="hidden"></canvas>
                         <!-- Scanning indicator (the whole frame is decoded; this is only a hint) -->
                         <div v-if="scanning && !result" class="absolute inset-0 flex items-center justify-center pointer-events-none">
                             <div class="w-3/4 aspect-[3/2] border-2 border-beat rounded-lg opacity-50"></div>
@@ -212,7 +212,6 @@
 
                 // Read tab state
                 const video = ref(null);
-                const canvasOverlay = ref(null);
                 const scanning = ref(false);
                 const starting = ref(false);
                 const result = ref('');
@@ -252,7 +251,7 @@
                 ];
 
                 const currentTab = computed(() => tabs.find(t => t.id === mode.value));
-                // resultFormat holds a normalized key shared by ZXing and the native BarcodeDetector
+                // resultFormat holds a BarcodeDetector format key (same names for native and ponyfill)
                 const formatNames = {
                     qr_code: 'QR Code', aztec: 'Aztec', data_matrix: 'Data Matrix', pdf417: 'PDF 417',
                     ean_13: 'EAN-13', ean_8: 'EAN-8', upc_a: 'UPC-A', upc_e: 'UPC-E',
@@ -305,6 +304,8 @@
                             return;
                         }
                         stream = s;
+                        // Start loading the WebAssembly decoder while the video warms up
+                        try { BarcodeDetectionAPI.prepareZXingModule({ fireImmediately: true }).catch(() => {}); } catch (e) {}
                         enableAutofocus(s.getVideoTracks()[0]);
                         video.value.srcObject = s;
                         video.value.play().catch(() => {});
@@ -338,84 +339,35 @@
                     if (video.value) video.value.srcObject = null;
                 }
 
-                // ZXing DecodeHintType is not exported by the browser bundle: POSSIBLE_FORMATS = 2, TRY_HARDER = 3
-                const BF = ZXingBrowser.BarcodeFormat;
-                const zxingReader = new ZXingBrowser.BrowserMultiFormatReader(new Map([
-                    [2, [BF.QR_CODE, BF.DATA_MATRIX, BF.AZTEC, BF.PDF_417, BF.EAN_13, BF.EAN_8, BF.UPC_A, BF.UPC_E,
-                         BF.CODE_128, BF.CODE_39, BF.CODE_93, BF.CODABAR, BF.ITF]],
-                    [3, true]
-                ]));
-                const zxingFormatKey = (f) => {
-                    const key = String(BF[f] || '').toLowerCase();
-                    return key === 'pdf_417' ? 'pdf417' : key;
-                };
-
-                // Native detector (Chrome/Android, …) is faster and more robust than ZXing when available
+                // Firefox (and Chrome on some desktops) has no usable native BarcodeDetector: use the
+                // zxing-cpp/WebAssembly ponyfill there. ZXing-js was dropped: it fails on some ordinary QR codes.
+                const formats = Object.keys(formatNames);
+                const wasmDetector = new BarcodeDetectionAPI.BarcodeDetector({ formats });
                 let nativeDetector = null;
                 const nativeReady = (async () => {
                     if (!('BarcodeDetector' in window)) return;
                     try {
                         const supported = await BarcodeDetector.getSupportedFormats();
-                        const formats = Object.keys(formatNames).filter(f => supported.includes(f));
-                        if (formats.length) nativeDetector = new BarcodeDetector({ formats });
+                        const usable = formats.filter(f => supported.includes(f));
+                        if (usable.includes('qr_code')) nativeDetector = new BarcodeDetector({ formats: usable });
                     } catch (e) {}
                 })();
 
                 const SCAN_INTERVAL_MS = 100;
-                const MAX_SCAN_SIDE = 1280;
                 let scanTick = 0;
-
-                function grabFrame(v) {
-                    const canvas = canvasOverlay.value;
-                    const scale = Math.min(1, MAX_SCAN_SIDE / Math.max(v.videoWidth, v.videoHeight));
-                    const w = Math.round(v.videoWidth * scale);
-                    const h = Math.round(v.videoHeight * scale);
-                    // Only resize when needed: assigning width/height reallocates the buffer
-                    if (canvas.width !== w) canvas.width = w;
-                    if (canvas.height !== h) canvas.height = h;
-                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                    ctx.drawImage(v, 0, 0, w, h);
-                    return { canvas, ctx, w, h };
-                }
-
-                // Light-on-dark codes (e.g. the Dark and Neon presets) are not decoded by ZXing as-is
-                function invertCanvas({ ctx, w, h }) {
-                    const img = ctx.getImageData(0, 0, w, h);
-                    const d = img.data;
-                    for (let i = 0; i < d.length; i += 4) {
-                        d[i] = 255 - d[i]; d[i + 1] = 255 - d[i + 1]; d[i + 2] = 255 - d[i + 2];
-                    }
-                    ctx.putImageData(img, 0, 0);
-                }
-
-                function decodeZxing(canvas) {
-                    try {
-                        const code = zxingReader.decodeFromCanvas(canvas);
-                        if (code && code.getText()) return { text: code.getText(), format: zxingFormatKey(code.getBarcodeFormat()) };
-                    } catch (e) {
-                        // No code found in this frame
-                    }
-                    return null;
-                }
 
                 async function scanFrame(session) {
                     if (session !== cameraSession || !scanning.value || !video.value) return;
                     const v = video.value;
                     let found = null;
                     if (v.readyState >= v.HAVE_CURRENT_DATA && v.videoWidth) {
-                        // Alternate between a normal pass and an inverted pass
-                        const inverted = scanTick++ % 2 === 1;
                         await nativeReady;
-                        if (!inverted && nativeDetector) {
-                            try {
-                                const codes = await nativeDetector.detect(v);
-                                if (codes.length) found = { text: codes[0].rawValue, format: codes[0].format };
-                            } catch (e) {}
-                        } else {
-                            const frame = grabFrame(v);
-                            if (inverted) invertCanvas(frame);
-                            found = decodeZxing(frame.canvas);
-                        }
+                        // With a native detector, alternate with the ponyfill, which also reads inverted (light-on-dark) codes
+                        const detector = nativeDetector && scanTick++ % 2 === 0 ? nativeDetector : wasmDetector;
+                        try {
+                            const codes = await detector.detect(v);
+                            if (codes.length) found = { text: codes[0].rawValue, format: codes[0].format };
+                        } catch (e) {}
                     }
                     if (session !== cameraSession) return;
                     if (found && found.text) {
@@ -629,7 +581,7 @@
 
                 return {
                     mode, theme, tabs, currentTab, formatLabel,
-                    video, canvasOverlay, scanning, starting, result, resultFormat, copied, cameraError,
+                    video, scanning, starting, result, resultFormat, copied, cameraError,
                     bookInfo, bookLoading, bookError, bookCoverError, isIsbn,
                     inputText, qrSvg, selectedPreset, presets,
                     switchTab, toggleTheme, startCamera, stopCamera, isUrl, copyResult,
